@@ -13,7 +13,7 @@
 #include <LUFA/Version.h>
 #include <LUFA/Drivers/Board/LEDs.h>
 #include <LUFA/Drivers/USB/USB.h>
-#include <LUFA/Drivers/Peripheral/Serial.h>
+#include <LUFA/Drivers/Peripheral/SerialStream.h>
 #include <LUFA/Drivers/Board/Buttons.h>
 
 #include "Descriptors.h"
@@ -62,10 +62,10 @@ void Shutdown(void);
 void Update(void);
 
 /*** Transmit functions ***/
-void TX_Status(uint8_t len);
-void TX_FlashConfig(uint8_t len);
-void TX_ReadData(uint8_t len);
-void TX_ZeroBytes(uint8_t len);
+void TX_Status(uint8_t len, uint8_t* buffer);
+void TX_FlashConfig(uint8_t len, uint8_t* buffer);
+void TX_ReadData(uint8_t len, uint8_t* buffer);
+void TX_ZeroBytes(uint8_t len, uint8_t* buffer);
 
 void EVENT_USB_Device_ConfigurationChanged(void);
 void EVENT_USB_Device_Connect(void);

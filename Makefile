@@ -136,7 +136,7 @@ include $(LUFA_PATH)/LUFA/makefile
 
 
 # List C source files here. (C dependencies are automatically generated.)
-SRC = Flasher.c Descriptors.c XSPI.c XNAND.c $(LUFA_SRC_USB) $(LUFA_SRC_SERIAL)
+SRC = Flasher.c Descriptors.c XSPI.c XNAND.c $(LUFA_SRC_USB) $(LUFA_SRC_SERIAL) $(LUFA_SRC_SERIALSTREAM)
 
 
 # List C++ source files here. (C dependencies are automatically generated.)
