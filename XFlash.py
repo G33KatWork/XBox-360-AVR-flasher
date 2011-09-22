@@ -3,7 +3,8 @@ import usb
 import sys
 import struct
 import pprint
-from  optparse import OptionParser
+import argparse
+import code
 
 pp = pprint.PrettyPrinter()
 
@@ -98,127 +99,136 @@ class XFlash:
 
     return self.flashStatus()    
     
-def calcecc(data):
-	assert len(data) == 0x210
-	val = 0
-	for i in range(0x1066):
-		if not i & 31:
-			v = ~struct.unpack("<L", data[i/8:i/8+4])[0]
-		val ^= v & 1
-		v >>= 1
-		if val & 1:
-			val ^= 0x6954559
-		val >>= 1
+# def calcecc(data):
+#   assert len(data) == 0x210
+#   val = 0
+#   for i in range(0x1066):
+#     if not i & 31:
+#       v = ~struct.unpack("<L", data[i/8:i/8+4])[0]
+#     val ^= v & 1
+#     v >>= 1
+#     if val & 1:
+#       val ^= 0x6954559
+#     val >>= 1
+# 
+#   val = ~val
+#   return data[:-4] + struct.pack("<L", (val << 6) & 0xFFFFFFFF)
+# 
+# def addecc(data, block = 0, off_8 = "\x00" * 4):
+#   res = ""
+#   while len(data):
+#     d = (data[:0x200] + "\x00" * 0x200)[:0x200]
+#     data = data[0x200:]
+# 
+#     d += struct.pack("<L4B4s4s", block / 32, 0, 0xFF, 0, 0, off_8, "\0\0\0\0")
+#     d = calcecc(d)
+#     block += 1
+#     res += d
+#   return res
 
-	val = ~val
-	return data[:-4] + struct.pack("<L", (val << 6) & 0xFFFFFFFF)
 
-def addecc(data, block = 0, off_8 = "\x00" * 4):
-	res = ""
-	while len(data):
-		d = (data[:0x200] + "\x00" * 0x200)[:0x200]
-		data = data[0x200:]
-		
-		d += struct.pack("<L4B4s4s", block / 32, 0, 0xFF, 0, 0, off_8, "\0\0\0\0")
-		d = calcecc(d)
-		block += 1
-		res += d
-	return res
+def main(argv):
+  parser = argparse.ArgumentParser(description='XBox 360 NAND Flasher')
+  subparsers = parser.add_subparsers(title='Operations', dest='action')
+  
+  parser_read = subparsers.add_parser('read', help='Dumps an image from the NAND')
+  parser_read.add_argument('file', nargs=1, type=argparse.FileType('w'), help='The file to dump the NAND to')
+  parser_read.add_argument('start', nargs='?', metavar='start', action='store', type=int, default=0, help='The block to start the action from')
+  parser_read.add_argument('end', nargs='?', metavar='end', action='store', type=int, default=0x400, help='The count of blocks to perform the action to')
+  
+  parser_write = subparsers.add_parser('write', help='Writes an image into the NAND')
+  parser_write.add_argument('file', nargs=1, type=argparse.FileType('r'), help='The image file to write to the NAND')
+  parser_write.add_argument('start', nargs='?', metavar='start', action='store', type=int, default=0, help='The block to start the action from')
+  parser_write.add_argument('end', nargs='?', metavar='end', action='store', type=int, default=0x400, help='The count of blocks to perform the action to')
+  
+  parser_erase = subparsers.add_parser('erase', help='Erases blocks in the NAND')
+  parser_erase.add_argument('start', nargs='?', metavar='start', action='store', type=int, default=0, help='The block to start the action from')
+  parser_erase.add_argument('end', nargs='?', metavar='end', action='store', type=int, default=0x400, help='The count of blocks to perform the action to')
+  
+  parser_update = subparsers.add_parser('update', help='Jumps into the bootloader of the NAND Flashing device for updating the firmware')
+  parser_shutdown = subparsers.add_parser('shutdown', help='Shuts down the attached XBox 360')
+  parser_poweron = subparsers.add_parser('powerup', help='Powers up the attached XBox 360')
+  
+  arguments = parser.parse_args(argv[1:])
 
-op = OptionParser(usage="usage: %prog [options] action [file] [start] [length]\n\nactions: r[ead] w[rite] e[rase] u[pdate] p[oweron] s[hutdown]")
-ui = ConsoleUI()
-
-op.add_option('-s', '--size', action='store', nargs=1, dest='flashsize', default=16, type=int, 
-                              help='flash size in MBytes [default: %default]')
-
-(options, args) = op.parse_args()
-
-if not args:
-  op.error("no action given")
-
-action = args[0]
-args = args[1:]
-file = None
-
-if action in ('w', 'write'):
-  if not args:
-    op.error("no filename given")
+  ui = ConsoleUI()
+  usbdev = None
+  
+  for bus in usb.busses():
+    for dev in bus.devices:
+      if dev.idVendor == 0xFFFF and dev.idProduct == 4:
+        usbdev = dev
+  
+  if not usbdev:
+    print "XFlash USB hardware not found."
+    sys.exit(1)
+  
+  print "Using XFlash @ [%s]" % (usbdev.filename)
+  
+  xf = XFlash(usbdev)
+  
+  if arguments.action in ('erase', 'write', 'read'):
+    try:
+      print "FlashConfig: 0x%08x" % (xf.flashInit())
+    except:
+      xf.flashDeInit()
+  
+  if arguments.action == 'erase':
+    #start = 0
+    #end = (options.flashsize * 1024) / 16
+    start = arguments.start
+    end = arguments.end
+  
+    ui.opStart('Erase')
+  
+    for b in range(start, end):
+      ui.opProgress(b, end-1)
+      status = xf.flashErase(b)
+  
+    ui.opEnd('0x%04x blocks OK' % (end))
+  
+  if arguments.action == 'read':
+    #start = 0
+    #end = (options.flashsize * 1024) / 16
+    start = arguments.start
+    end = arguments.end
+  
+    ui.opStart('Read')
+  
+    for b in range(start, end):
+      ui.opProgress(b, end-1)
+      (status, buffer) = xf.flashReadBlock(b)
+      arguments.file[0].write(buffer)
+  
+  if arguments.action == 'write':
+    #start = 0
+    #end = (options.flashsize * 1024) / 16 
     
-  file = open(args[0], 'r')
-  args = args[1:]
+    start = arguments.start
+    end = arguments.end
+    blocksize = 528 * 32
   
-if action in ('r', 'read'):
-  if not args:
-    op.error("no filename given")
-    
-  file = open(args[0], 'w')
-  args = args[1:]
-
-usbdev = None
-
-for bus in usb.busses():
-  for dev in bus.devices:
-    if dev.idVendor == 0xFFFF and dev.idProduct == 4:
-    	usbdev = dev
-    	
-if not usbdev:
-  print "XFlash USB hardware not found."
-  sys.exit(1)
+    ui.opStart('Write')
   
-print "Using XFlash @ [%s]" % (usbdev.filename)
-
-xf = XFlash(usbdev)
-
-if action in ('e', 'erase', 'w', 'write', 'r', 'read'):
-  try:
-    print "FlashConfig: 0x%08x" % (xf.flashInit())
-  except:
-    xf.flashDeInit()
-
-if action in ('e', 'erase'):
-  start = 0
-  end = (options.flashsize * 1024) / 16
+    for b in range(start, end):
+      ui.opProgress(b, end-1)  
+      buffer = arguments.file[0].read(blocksize)
+      
+      if len(buffer) < blocksize:
+        buffer += ('\xFF' * (blocksize-len(buffer)))
   
-  ui.opStart('Erase')
+      status = xf.flashWriteBlock(b, buffer)
   
-  for b in range(start, end):
-    ui.opProgress(b, end - 1)
-    status = xf.flashErase(b)
-
-  ui.opEnd('0x%04x blocks OK' % (end))
-
-if action in ('r', 'read'):
-  start = 0
-  end = (options.flashsize * 1024) / 16
-
-  ui.opStart('Read')
+  if arguments.action == 'update':
+    xf.update()
   
-  for b in range(start, end):
-    ui.opProgress(b, end - 1)
-    (status, buffer) = xf.flashReadBlock(b)
-    file.write(buffer)
-
-if action in ('w', 'write'):
-  start = 0
-  end = (options.flashsize * 1024) / 16 
-  blocksize = 528 * 32
-
-  ui.opStart('Write')
-
-  for b in range(start, end):
-  	ui.opProgress(b, end -1)  
-        buffer = file.read(blocksize)
-        
-        if len(buffer) < blocksize:
-  	  buffer += ('\xFF' * (blocksize-len(buffer)))
-
-	status = xf.flashWriteBlock(b, buffer)
-
-if action in ('u', 'update'):
-  xf.update()
+  if arguments.action == 'powerup':
+    xf.flashPowerOn()
   
-if action in ('p', 'poweron'):
-  xf.flashPowerOn()
+  if arguments.action == 'shutdown':
+    xf.flashShutdown()
 
-if action in ('s', 'shutdown'):
-  xf.flashShutdown()
+
+if __name__ == '__main__':
+  main(sys.argv)
+  
