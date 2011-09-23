@@ -57,7 +57,10 @@ class XFlash:
     self.cmd(0x11)
     
   def update(self):
-    self.cmd(0xF0)
+    try:
+      self.cmd(0xF0)
+    except:
+      pass
       
   def flashInit(self):
     self.cmd(0x03)
@@ -85,7 +88,7 @@ class XFlash:
   def flashReadBlock(self, block):
     self.cmd(0x01, block, 528 * 32)
     
-    buffer = self.devhandle.bulkRead(self.ep_in, 528 * 32, 100000)
+    buffer = self.devhandle.bulkRead(self.ep_in, 528 * 32, 1000)
     buffer = ''.join([chr(x) for x in buffer])
 
     status = self.flashStatus()

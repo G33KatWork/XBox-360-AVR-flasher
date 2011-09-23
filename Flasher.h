@@ -67,6 +67,8 @@ void TX_FlashConfig(uint8_t len, uint8_t* buffer);
 void TX_ReadData(uint8_t len, uint8_t* buffer);
 void TX_ZeroBytes(uint8_t len, uint8_t* buffer);
 
+void RX_WriteFlash(uint8_t len, uint8_t* buffer);
+
 void EVENT_USB_Device_ConfigurationChanged(void);
 void EVENT_USB_Device_Connect(void);
 void EVENT_USB_Device_Disconnect(void);

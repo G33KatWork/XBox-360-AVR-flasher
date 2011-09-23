@@ -9,14 +9,18 @@ typedef void (*FillTxBufferFunction)(uint8_t len, uint8_t* buffer);
 #define	RX_IDLE			0
 
 #define TX_BUFFER_SIZE  FLASHER_EPSIZE
+#define RX_BUFFER_SIZE  FLASHER_EPSIZE
 
 uint8_t TX_Buffer[TX_BUFFER_SIZE];
 uint32_t TX_ToSend = 0;
 FillTxBufferFunction TX_Function = NULL;
 uint8_t TX_TransmitState = TX_IDLE;
 
-uint8_t RX_ReceiveState = RX_IDLE;
+uint8_t RX_Buffer[RX_BUFFER_SIZE];
 uint32_t RX_ToReceive = 0;
+FillTxBufferFunction RX_Function = NULL;
+uint8_t RX_ReceiveState = RX_IDLE;
+uint8_t commandProcess;
 
 uint8_t FlashConfig[4];
 uint16_t Status = 0;
@@ -24,32 +28,18 @@ uint16_t Status = 0;
 uint32_t wordsLeft;
 uint32_t nextBlock;
 
-StreamCallbackPtr_t RX_Function;
-
-//#define RS232_DEBUG
-#ifdef RS232_DEBUG
-	#define MySerial_TxString_P(x) Serial_TxString_P(x)
-	#define MySerial_TxInt(x) Serial_TxInt(x)
+//#define DEBUG
+#ifdef DEBUG
+    #define dbg_P(...)   printf_P(__VA_ARGS__)
 #else
-	#define MySerial_TxString_P(x)
-	#define MySerial_TxInt(x)
+	#define dbg_P(...)
 #endif
-
-void Serial_TxInt(uint32_t i)
-{
-	char bla[10] = {0};
-	itoa(i, bla, 16);
-	Serial_TxString(bla);
-}
 
 int main(void)
 {
 	SetupHardware();
 	LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
 	sei();
-	
-    printf_P(PSTR("Hello\r\n"));
-	MySerial_TxString_P(PSTR("Hello\r\n"));
 
 	for (;;)
 	{
@@ -69,7 +59,9 @@ void SetupHardware(void)
 	
 	/* Hardware Initialization */
 	LEDs_Init();
+#ifdef DEBUG
 	SerialStream_Init(9600, false);
+#endif
 	USB_Init();
 	XSPI_Init();
 }
@@ -87,52 +79,57 @@ void Flasher_Task()
 		{
 			uint8_t bytesToSend = (TX_ToSend > sizeof(TX_Buffer)) ? sizeof(TX_Buffer) : TX_ToSend;
 			
-			/*MySerial_TxString_P(PSTR("Writing 0x"));
-			MySerial_TxInt(bytesToSend);
-			MySerial_TxString_P(PSTR(" Bytes to Endpoint\r\n"));*/
-			
 			if(!TX_Function)
-    			MySerial_TxString_P(PSTR("ERROR: TX_Function is NULL\r\n"));
+    			dbg_P(PSTR("ERROR: TX_Function is NULL\r\n"));
+			
 			TX_Function(bytesToSend, TX_Buffer);	//Fill TX-Buffer
 			
-            //memset(TX_Buffer, 0xff, bytesToSend);
-			uint8_t err = Endpoint_Write_Stream_LE(TX_Buffer, bytesToSend, NO_STREAM_CALLBACK);
-			if(err)
-			{
-    			MySerial_TxString_P(PSTR("Error at Endpoint_Write_Stream_LE: "));
-    			MySerial_TxInt(err);
-    			MySerial_TxString_P(PSTR("\r\n"));
-			    
-			}
+            Endpoint_Write_Stream_LE(TX_Buffer, bytesToSend, NO_STREAM_CALLBACK);
 			TX_ToSend -= bytesToSend;
-			/*MySerial_TxString_P(PSTR("TX Buffer written to stream. Bytes left: "));
-			MySerial_TxInt(TX_ToSend);
-			MySerial_TxString_P(PSTR(" Bytes to Endpoint\r\n"));*/
 			
 			Endpoint_ClearIN();
-			//MySerial_TxString_P(PSTR("Endpoint cleared\r\n"));
 			
 			if(TX_ToSend == 0)
-			{
-				MySerial_TxString_P(PSTR("Transmission seems finished\r\n"));
 				TX_TransmitState = TX_IDLE;
-			}
-			
 		}
 	}
-	else
+	/*else
 	{
 	    if(TX_TransmitState == TX_TRANSMITTING)
 		{
-		    MySerial_TxString_P(PSTR("Want to transmit, but cant\r\n"));
+		    dbg_P(PSTR("Want to transmit, but cant\r\n"));
 	    }
-	}
+	}*/
 	
-	/*Endpoint_SelectEndpoint(FLASHER_STREAM_OUT_EPNUM);
 	
-	if (Endpoint_IsOUTReceived())
+	Endpoint_SelectEndpoint(FLASHER_STREAM_OUT_EPNUM);
+
+	if (Endpoint_IsConfigured() && Endpoint_IsOUTReceived() && Endpoint_IsReadWriteAllowed())
 	{
-		Endpoint_ClearOUT();
+		if(RX_ReceiveState == RX_RECEIVING)
+		{
+			uint8_t bytesToReceive = (RX_ToReceive > sizeof(RX_Buffer)) ? sizeof(RX_Buffer) : RX_ToReceive;
+            
+            Endpoint_Read_Stream_LE(RX_Buffer, bytesToReceive, NO_STREAM_CALLBACK);
+			
+			if(!RX_Function)
+    			dbg_P(PSTR("ERROR: RX_Function is NULL\r\n"));
+			
+			RX_Function(bytesToReceive, RX_Buffer);	//Hand received data to handling function
+			
+			RX_ToReceive -= bytesToReceive;
+			Endpoint_ClearOUT();
+			
+			if(RX_ToReceive == 0)
+				RX_ReceiveState = RX_IDLE;
+		}
+	}
+	/*else
+	{
+	    if(RX_ReceiveState == RX_RECEIVING)
+		{
+		    dbg_P(PSTR("Want to receive, but cant\r\n"));
+	    }
 	}*/
 }
 
@@ -141,20 +138,20 @@ void EVENT_USB_Device_Connect(void)
 	/* Indicate USB enumerating */
 	LEDs_SetAllLEDs(LEDMASK_USB_ENUMERATING);
 	
-	MySerial_TxString_P(PSTR("Device connected\r\n"));
+	dbg_P(PSTR("Device connected\r\n"));
 }
 
 void EVENT_USB_Device_Disconnect(void)
 {
 	/* Indicate USB not ready */
 	LEDs_SetAllLEDs(LEDMASK_USB_NOTREADY);
-	MySerial_TxString_P(PSTR("Device disconnected\r\n"));
+	dbg_P(PSTR("Device disconnected\r\n"));
 }
 
 void EVENT_USB_Device_ConfigurationChanged(void)
 {
 	LEDs_SetAllLEDs(LEDMASK_USB_READY);
-	MySerial_TxString_P(PSTR("Configuration changed\r\n"));
+	dbg_P(PSTR("Configuration changed\r\n"));
 	
 	/* Setup MIDI stream endpoints */
 	if (!(Endpoint_ConfigureEndpoint(FLASHER_STREAM_OUT_EPNUM, EP_TYPE_BULK,
@@ -162,7 +159,7 @@ void EVENT_USB_Device_ConfigurationChanged(void)
 	                                 ENDPOINT_BANK_SINGLE)))
 	{
 		LEDs_SetAllLEDs(LEDMASK_USB_ERROR);
-		MySerial_TxString_P(PSTR("Output endpoint configuration failed\r\n"));
+		dbg_P(PSTR("Output endpoint configuration failed\r\n"));
 	}	
 	
 	if (!(Endpoint_ConfigureEndpoint(FLASHER_STREAM_IN_EPNUM, EP_TYPE_BULK,
@@ -170,7 +167,7 @@ void EVENT_USB_Device_ConfigurationChanged(void)
 	                                 ENDPOINT_BANK_SINGLE)))
 	{
 		LEDs_SetAllLEDs(LEDMASK_USB_ERROR);
-		MySerial_TxString_P(PSTR("Input endpoint configuration failed\r\n"));
+		dbg_P(PSTR("Input endpoint configuration failed\r\n"));
 	}
 }
 
@@ -181,27 +178,16 @@ void EVENT_USB_Device_UnhandledControlRequest(void)
 	
 	Endpoint_ClearSETUP();
 	
-	MySerial_TxString_P(PSTR("Received vendor request: "));
-	
-	MySerial_TxInt(USB_ControlRequest.bRequest);
-	MySerial_TxString_P(PSTR("\r\n"));
-	
 	uint32_t data[2];
 	Endpoint_Read_Control_Stream_LE(&data, sizeof(data));
 	Endpoint_ClearOUT();
 	
-	MySerial_TxString_P(PSTR("Argument B: "));
-	MySerial_TxInt(data[0]);
-	MySerial_TxString_P(PSTR("\r\n"));
-	
-	MySerial_TxString_P(PSTR("Argument A: "));
-	MySerial_TxInt(data[1]);
-	MySerial_TxString_P(PSTR("\r\n"));
+	dbg_P(PSTR("Received vendor request: %x - ArgA: %x, ArgB: %x"), USB_ControlRequest.bRequest, data[0], data[1]);
 	
 	switch(USB_ControlRequest.bRequest)
 	{
 		case REQ_DATAREAD: StartFlashRead(data[0] << 5, data[1]); break;
-		case REQ_DATAWRITE: break;
+        case REQ_DATAWRITE: StartFlashWrite(data[0] << 5, data[1]); break;
 		case REQ_DATAINIT: FlashInit(); break;
 		case REQ_DATADEINIT: FlashDeinit(); break;
 		case REQ_DATASTATUS: FlashStatus(); break;
@@ -216,11 +202,7 @@ void EVENT_USB_Device_UnhandledControlRequest(void)
 
 void StartFlashRead(uint32_t blockNum, uint32_t len)
 {
-	MySerial_TxString_P(PSTR("Starting to read flash starting with block 0x"));
-	MySerial_TxInt(blockNum);
-	MySerial_TxString_P(PSTR(" with length 0x"));
-	MySerial_TxInt(len);
-	MySerial_TxString_P(PSTR("\r\n"));
+	dbg_P(PSTR("Starting to read flash starting with block 0x%x with length 0x%x\r\n"), blockNum, len);
 	
     Status = 0;
     wordsLeft = 0;
@@ -233,22 +215,22 @@ void StartFlashRead(uint32_t blockNum, uint32_t len)
 
 void StartFlashWrite(uint32_t blockNum, uint32_t len)
 {
-	MySerial_TxString_P(PSTR("Starting to write flash starting with block 0x"));
-	MySerial_TxInt(blockNum);
-	MySerial_TxString_P(PSTR(" with length 0x"));
-	MySerial_TxInt(len);
-	MySerial_TxString_P(PSTR("\r\n"));
+    dbg_P(PSTR("Starting to write flash starting with block 0x%x with length 0x%x\r\n"), blockNum, len);
 	
-	//TODO: Issue write start command to NAND and set real status!
-	Status = 0x0000;
+	Status = 0;
+    wordsLeft = 0;
+    nextBlock = blockNum;
 	
+	RX_Function = RX_WriteFlash;
 	RX_ReceiveState = RX_RECEIVING;
 	RX_ToReceive = len;
+	
+    commandProcess = 0;
 }
 
 void FlashInit()
 {
-	MySerial_TxString_P(PSTR("Initializing Flash\r\n"));
+	dbg_P(PSTR("Initializing Flash\r\n"));
 	XSPI_EnterFlashmode();
 	XSPI_Read(0, FlashConfig);	//2 times?
 	XSPI_Read(0, FlashConfig);
@@ -260,13 +242,13 @@ void FlashInit()
 
 void FlashDeinit()
 {
-	MySerial_TxString_P(PSTR("Deinitializing Flash\r\n"));
+	dbg_P(PSTR("Deinitializing Flash\r\n"));
 	XSPI_LeaveFlashmode();
 }
 
 void FlashStatus()
 {
-	MySerial_TxString_P(PSTR("Retrieving flash status\r\n"));
+	dbg_P(PSTR("Retrieving flash status\r\n"));
 	
 	TX_Function = TX_Status;
 	TX_TransmitState = TX_TRANSMITTING;
@@ -275,12 +257,10 @@ void FlashStatus()
 
 void FlashErase(uint32_t blockNum)
 {
-	MySerial_TxString_P(PSTR("Erasing flash block 0x"));
-	MySerial_TxInt(blockNum);
-	MySerial_TxString_P(PSTR("\r\n"));
+	dbg_P(PSTR("Erasing flash block 0x%x\r\n"), blockNum);
 
 	//set status
-	Status = XNAND_Erase(blockNum << 5);
+	Status = XNAND_Erase(blockNum);
 
     //send 4 0-bytes. FIXME: necessary? PIC does that, too
     TX_Function = TX_ZeroBytes;
@@ -290,23 +270,62 @@ void FlashErase(uint32_t blockNum)
 
 void PowerUp()
 {
-	MySerial_TxString_P(PSTR("Powering Xbox up\r\n"));
+	dbg_P(PSTR("Powering Xbox up\r\n"));
 	XSPI_LeaveFlashmode();
 	XSPI_Powerup();
 }
 
 void Shutdown()
 {
-	MySerial_TxString_P(PSTR("Shutting Xbox down\r\n"));
+	dbg_P(PSTR("Shutting Xbox down\r\n"));
 	XSPI_LeaveFlashmode();
 	XSPI_Shutdown();
 }
 
 void Update()
 {
-	MySerial_TxString_P(PSTR("Jumping to bootloader. I hope we'll meet again!\r\n"));
+	dbg_P(PSTR("Jumping to bootloader. I hope we'll meet again!\r\n"));
 	USB_ShutDown();
 	RunBootloader();
+}
+
+
+/*** Receive functions ***/
+void RX_WriteFlash(uint8_t len, uint8_t* buffer)
+{
+    len /= 4;
+    
+    if(commandProcess == 0)
+    {
+        Status = XNAND_Erase(nextBlock);
+        XNAND_StartWrite();
+        commandProcess = 1;
+    }
+
+    while(len)
+    {
+        uint8_t writeNow;
+        
+        if(!wordsLeft)
+        {
+            nextBlock++;
+            wordsLeft = 0x84;
+        }
+        
+        writeNow = (len < wordsLeft) ? len : wordsLeft;
+        XNAND_WriteProcess(buffer, writeNow);
+        
+        buffer += (writeNow*4);
+        wordsLeft -= writeNow;
+        len -= writeNow;
+        
+        //execute write if buffer in NAND controller is filled
+        if(!wordsLeft)
+        {
+            Status = XNAND_WriteExecute(nextBlock-1);
+            XNAND_StartWrite();
+        }
+    }
 }
 
 
@@ -333,22 +352,13 @@ void TX_ReadData(uint8_t len, uint8_t* buffer)
         
         if(!wordsLeft)
         {
-            //printf_P(PSTR("Starting read for block %x\r\n"), nextBlock);
-            
             Status = XNAND_StartRead(nextBlock);
             nextBlock++;
             wordsLeft = 0x84;
         }
         
         readNow = (len < wordsLeft) ? len : wordsLeft;
-        
         XNAND_ReadFillBuffer(buffer, readNow);
-        
-        /*printf_P(PSTR("Read %x bytes\r\n"), readNow*4);
-        for(int i = 0; i < readNow*4; i++)
-            printf_P(PSTR("%x "), buffer[i]);
-        
-        printf_P(PSTR("\r\n"));*/
         
         buffer += (readNow*4);
         wordsLeft -= readNow;
