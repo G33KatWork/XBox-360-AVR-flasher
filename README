@@ -1,0 +1,28 @@
+This is an XBox 360 SPI NAND programmer for all AT90USB-style Atmel
+AVR controllers.
+It is mostly based on the picflash and can be seen as a port.
+
+The firmware was developed on an AT90USBKey, but all other AVRs which
+have an integrated USB Controller (and are supported by LUFA) should
+work, too. Just have an eye on the voltage your board uses. The USBKey
+has a 3,3V power supply which is exactly the voltage needed.
+The firmware was tested on a 16MB NAND only, so be careful if you have
+a 256MB oder 512MB Jasper console.
+
+If you want to change the SPI Pinout, you can do so in the XSPI.h file
+in the defines.
+
+I also put some work into the XFlash script which now has a fancy
+argument parser, which puts some life into the start and end parameters.
+struct.pack in the USB Code now uses always 32 bit little endian
+integers to make it work on 64 bit systems.
+
+To use it, just edit the said XSPI.h header file to match your pinout,
+run make, put your controller into DFU mode, and run make dfu to
+programm the firmware. After that it should be useable right away.
+Of course, you need a working AVR-GCC setup and the dfu-programmer for this.
+
+If you want some RS232 debugging output, remove the comment on the DEBUG
+define in the Flasher.c file.
+
+Patches are very much appreciated!
